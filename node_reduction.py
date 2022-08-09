@@ -5,12 +5,20 @@ import plotly.graph_objects as go
 import math
 import argparse
 import sys
-
+import time
+from pyunravel import ES, DB
+import ast
+import json
 
 class NodeReduction:
     def __init__(self, filter_keys, percentile):
         self.filter_keys = filter_keys
         self.percentile = percentile
+        self.db = DB.from_unravel_properties()
+
+    def update_progress_bar(self):
+        sys.stdout.write("---")
+        sys.stdout.flush()
 
     def px_line_graph(self, index, cluster_disc_resp):
         data = cluster_disc_resp.json()['mean']['metrics_summary']['metrics'][index]['data']
@@ -37,7 +45,7 @@ class NodeReduction:
              cluster_disc_resp.json()['cluster_summary']['workflow_schedulers']]]
         return cluster_info_values
 
-    def figures_to_html(self, figs, filename="node_reduction.html"):
+    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/queue_analysis_test/20220808T063208/node_reduction.html"):
         with open(filename, 'w') as dashboard:
             dashboard.write("<html><head></head><body>" + "\n")
             for fig in figs:
@@ -85,14 +93,18 @@ class NodeReduction:
                           title='Spec/Usage trend for selected hosts')
         return fig
 
-    def create_host_fig(self,payload, key):
+    def create_host_fig(self, payload_unicode, key):
+        payload = json.dumps(payload_unicode)
         main_df_list = []
         host_list = []
         host_roles_list = []
         usage_list = []
         actual_usage_list = []
         fig = None
-        for hosts_data in payload.json()[key]['hosts']:
+        # payload = json.loads(payload)
+        payload = eval(payload)
+        payload = json.loads(payload)
+        for hosts_data in payload[key]['hosts']:
             if self.filter_keys not in hosts_data['usage']['roles']:
                 data_list = []
                 host_list.append(hosts_data['id'])
@@ -151,7 +163,82 @@ class NodeReduction:
                               self.convert_size(total_memory / count), self.convert_size(total_disk / count)]]
         return avg_hosts_values
 
+    def check_if_task_is_completed(self, task_id):
+        self.update_progress_bar()
+        query = "SELECT task_status, entity_id FROM ondemand_tasks WHERE task_id = '{}'".format(task_id)
+        response = self.db.execute(query)
+        if response[0][0].encode("utf-8") == "SUCCESS":
+            return response[0][1].encode("utf-8")
+        elif response[0][0].encode("utf-8") == "FAILURE":
+            return False
+        else:
+            time.sleep(10)
+            return self.check_if_task_is_completed(task_id)
+
+
+    def generate_cluster_mapping_per_host_report(self):
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            # Already added when you pass json= but not when you pass data=
+            # 'Content-Type': 'application/json',
+        }
+
+        json_data = {
+            'instance_type': [
+                'x1.32xlarge',
+                'x1e.32xlarge',
+            ],
+            'cloud_provider': 'EC2',
+            'custom_percentile': None,
+            'prefs': {
+                'region': 'AWS GovCloud (US-East)',
+                'additional_storage_type': {
+                    'name': 's3',
+                    'pretty_name': 'S3',
+                    'type': 'object_storage',
+                    'id': 'object_storage',
+                    'text': 'Object storage',
+                },
+                'migration_type': 'mappings_per_host',
+                'selected': {
+                    'x1.32xlarge': {
+                        'override_cost': 16.006,
+                    },
+                    'x1e.32xlarge': {
+                        'override_cost': 32,
+                    },
+                },
+            },
+        }
+
+        response = requests.post('http://localhost:5001/cloud-mappings-reports', headers=headers, json=json_data)
+        if response.status_code == 200:
+            task_id = response.json()['task_id']
+            time.sleep(5)
+            status_entity_id = self.check_if_task_is_completed(task_id)
+            if status_entity_id == False:
+                sys.stderr.write("TASK {} failed!!!".format(task_id) + "\n")
+                sys.stderr.flush()
+                sys.exit(1)
+            else:
+                return status_entity_id
+        else:
+            sys.stderr.write("cloud-mappings-reports failed" + "\n")
+            sys.stderr.flush()
+            sys.exit(1)
+
+    def get_report_payload(self, entity_id):
+        query = "SELECT output_json FROM report_instances WHERE report_instance_id = '{}'".format(entity_id)
+        response = self.db.execute(query)
+        return response[0][0]
+
     def generate(self):
+        toolbar_width = 40
+        sys.stdout.write("[%s]" % (" " * toolbar_width))
+        sys.stdout.flush()
+        sys.stdout.write("\b" * (toolbar_width+1)) # return to start of line, after '['
+        key = ""
         if self.percentile == 100:
             key = 'p_100'
         elif self.percentile == 99:
@@ -165,21 +252,38 @@ class NodeReduction:
         elif self.percentile == 80:
             key = 'p_80'
         fig_list = []
+        self.update_progress_bar()
+        entity_id = self.generate_cluster_mapping_per_host_report()
+        self.update_progress_bar()
+        payload = self.get_report_payload(entity_id)
+        self.update_progress_bar()
         cluster_disc_resp = requests.get(
             "https://gist.githubusercontent.com/Chandu-sanjith/eb453ee8ec2c810ba8fa87d2b8445399/raw/e1b768ef1daf4d38d0e2aa321f9136fb470e005a/Cluster%2520Disc")
+        self.update_progress_bar()
         cluster_info_values = self.generate_cluster_info_values(cluster_disc_resp)
+        self.update_progress_bar()
         fig_list.append(self.generate_table_fig(cluster_info_values, 'CI'))
+        self.update_progress_bar()
         avg_hosts_values = self.generate_avg_hosts_values(cluster_disc_resp)
+        self.update_progress_bar()
         fig_list.append(self.generate_table_fig(avg_hosts_values, 'CIIII'))
+        self.update_progress_bar()
         fig_list.append(self.px_line_graph(0, cluster_disc_resp))
+        self.update_progress_bar()
         fig_list.append(self.px_line_graph(1, cluster_disc_resp))
-        payload = requests.get(
-            "https://gist.githubusercontent.com/Chandu-sanjith/77e067696662e73eba38cf15c7145fb3/raw/a98eae0f9ccfa7903d3e9ff8c0f8c6e17582bbbe/cloud%2520mapping%2520payload")
+        self.update_progress_bar()
+        # payload = requests.get(
+        #     "https://gist.githubusercontent.com/Chandu-sanjith/77e067696662e73eba38cf15c7145fb3/raw/a98eae0f9ccfa7903d3e9ff8c0f8c6e17582bbbe/cloud%2520mapping%2520payload")
         fig1, fig2 = self.create_host_fig(payload, key)
+        self.update_progress_bar()
         fig_list.append(fig1)
+        self.update_progress_bar()
         fig_list.append(fig2)
-
+        self.update_progress_bar()
         self.figures_to_html(fig_list)
+        sys.stdout.write("]\n")
+        print("Done and Dusted!!!!!")
+
 
 
 
@@ -203,4 +307,5 @@ if __name__ == "__main__":
         print_error_and_exit("percentile should be one of 100, 99, 95, 90, 85, 80 only....")
 
     NodeReduction(**vars(args)).generate()
+
 
