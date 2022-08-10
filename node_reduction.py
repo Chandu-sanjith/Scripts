@@ -17,11 +17,15 @@ class NodeReduction:
         self.db = DB.from_unravel_properties()
 
     def update_progress_bar(self):
-        sys.stdout.write("---")
+        sys.stdout.write("###")
         sys.stdout.flush()
 
     def px_line_graph(self, index, cluster_disc_resp):
-        data = cluster_disc_resp.json()['mean']['metrics_summary']['metrics'][index]['data']
+        self.update_progress_bar()
+        cluster_disc_resp = json.dumps(cluster_disc_resp)
+        cluster_disc_resp = eval(cluster_disc_resp)
+        cluster_disc_resp = json.loads(cluster_disc_resp)
+        data = cluster_disc_resp['mean']['metrics_summary']['metrics'][index]['data']
         df = pd.DataFrame.from_dict(data)
         df['date'] = pd.to_datetime(df['date'], origin='unix', unit='ms')
         if index == 0:
@@ -32,20 +36,23 @@ class NodeReduction:
         return fig
 
     def generate_cluster_info_values(self, cluster_disc_resp):
+        cluster_disc_resp = json.dumps(cluster_disc_resp)
+        cluster_disc_resp = eval(cluster_disc_resp)
+        cluster_disc_resp = json.loads(cluster_disc_resp)
         cluster_info_values = [
             ['Cluster Name', 'Stack Type', 'Stack Version', 'Build Version', 'Kerberos', 'High Availability',
              'Services', 'Workflow Schedulers'],  # 1st col
-            [cluster_disc_resp.json()['cluster_summary']['cluster_name'],
-             cluster_disc_resp.json()['cluster_summary']['stack_type'],
-             cluster_disc_resp.json()['cluster_summary']['stack_version'],
-             cluster_disc_resp.json()['cluster_summary']['cluster_stack_build_version'],
-             cluster_disc_resp.json()['cluster_summary']['is_kerberized'],
-             cluster_disc_resp.json()['cluster_summary']['is_ha'],
-             cluster_disc_resp.json()['cluster_summary']['services'],
-             cluster_disc_resp.json()['cluster_summary']['workflow_schedulers']]]
+            [cluster_disc_resp['cluster_summary']['cluster_name'],
+             cluster_disc_resp['cluster_summary']['stack_type'],
+             cluster_disc_resp['cluster_summary']['stack_version'],
+             cluster_disc_resp['cluster_summary']['cluster_stack_build_version'],
+             cluster_disc_resp['cluster_summary']['is_kerberized'],
+             cluster_disc_resp['cluster_summary']['is_ha'],
+             cluster_disc_resp['cluster_summary']['services'],
+             cluster_disc_resp['cluster_summary']['workflow_schedulers']]]
         return cluster_info_values
 
-    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/queue_analysis_test/20220808T063208/node_reduction.html"):
+    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/topk-impala/20220809T082740/node_reduction.html"):
         with open(filename, 'w') as dashboard:
             dashboard.write("<html><head></head><body>" + "\n")
             for fig in figs:
@@ -63,6 +70,7 @@ class NodeReduction:
         return "%s %s" % (s, size_name[i])
 
     def generate_table_fig(self, values, used_for):
+        self.update_progress_bar()
         fig = go.Figure(data=[go.Table(
             columnorder=[1, 2],
             columnwidth=[80, 400],
@@ -94,6 +102,7 @@ class NodeReduction:
         return fig
 
     def create_host_fig(self, payload_unicode, key):
+        self.update_progress_bar()
         payload = json.dumps(payload_unicode)
         main_df_list = []
         host_list = []
@@ -151,7 +160,10 @@ class NodeReduction:
         total_memory = 0
         count = 0
         avg_hosts_values = None
-        for hosts_data in cluster_disc_resp.json()['hosts']:
+        cluster_disc_resp = json.dumps(cluster_disc_resp)
+        cluster_disc_resp = eval(cluster_disc_resp)
+        cluster_disc_resp = json.loads(cluster_disc_resp)
+        for hosts_data in cluster_disc_resp['hosts']:
             if self.filter_keys not in hosts_data['roles']:
                 count = count + 1
                 total_cores = total_cores + hosts_data['cores']
@@ -177,6 +189,7 @@ class NodeReduction:
 
 
     def generate_cluster_mapping_per_host_report(self):
+        self.update_progress_bar()
         headers = {
             'Accept': 'application/json, text/plain, */*',
             'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
@@ -233,8 +246,45 @@ class NodeReduction:
         response = self.db.execute(query)
         return response[0][0]
 
+    def generate_cluster_discovery_report(self):
+
+        headers = {
+            'Accept': 'application/json, text/plain, */*',
+            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+            'Referer': 'https://sd58.unraveldata.com:3000/',
+            'Sec-Fetch-Dest': 'empty',
+            'Sec-Fetch-Mode': 'cors',
+            'Sec-Fetch-Site': 'same-origin',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36',
+            'sec-ch-ua': '".Not/A)Brand";v="99", "Google Chrome";v="103", "Chromium";v="103"',
+            'sec-ch-ua-mobile': '?0',
+            'sec-ch-ua-platform': '"macOS"',
+        }
+
+        params = {
+            'start': '1657564200000',
+            'end': '1660156199000',
+        }
+
+        response = requests.get('http://localhost:5001/cluster-discovery', params=params, headers=headers)
+        if response.status_code == 200:
+            task_id = response.json()['task_id']
+            time.sleep(5)
+            status_entity_id = self.check_if_task_is_completed(task_id)
+            if status_entity_id == False:
+                sys.stderr.write("TASK {} failed!!!".format(task_id) + "\n")
+                sys.stderr.flush()
+                sys.exit(1)
+            else:
+                return status_entity_id
+        else:
+            sys.stderr.write("cloud-mappings-reports failed" + "\n")
+            sys.stderr.flush()
+            sys.exit(1)
+
     def generate(self):
         toolbar_width = 40
+        print("Node Reduction report started!!!!")
         sys.stdout.write("[%s]" % (" " * toolbar_width))
         sys.stdout.flush()
         sys.stdout.write("\b" * (toolbar_width+1)) # return to start of line, after '['
@@ -253,34 +303,21 @@ class NodeReduction:
             key = 'p_80'
         fig_list = []
         self.update_progress_bar()
+        cluster_disc_entity_id = self.generate_cluster_discovery_report()
+        cluster_disc_resp = self.get_report_payload(cluster_disc_entity_id)
         entity_id = self.generate_cluster_mapping_per_host_report()
-        self.update_progress_bar()
         payload = self.get_report_payload(entity_id)
-        self.update_progress_bar()
-        cluster_disc_resp = requests.get(
-            "https://gist.githubusercontent.com/Chandu-sanjith/eb453ee8ec2c810ba8fa87d2b8445399/raw/e1b768ef1daf4d38d0e2aa321f9136fb470e005a/Cluster%2520Disc")
-        self.update_progress_bar()
         cluster_info_values = self.generate_cluster_info_values(cluster_disc_resp)
-        self.update_progress_bar()
         fig_list.append(self.generate_table_fig(cluster_info_values, 'CI'))
-        self.update_progress_bar()
         avg_hosts_values = self.generate_avg_hosts_values(cluster_disc_resp)
-        self.update_progress_bar()
         fig_list.append(self.generate_table_fig(avg_hosts_values, 'CIIII'))
-        self.update_progress_bar()
         fig_list.append(self.px_line_graph(0, cluster_disc_resp))
-        self.update_progress_bar()
         fig_list.append(self.px_line_graph(1, cluster_disc_resp))
-        self.update_progress_bar()
-        # payload = requests.get(
-        #     "https://gist.githubusercontent.com/Chandu-sanjith/77e067696662e73eba38cf15c7145fb3/raw/a98eae0f9ccfa7903d3e9ff8c0f8c6e17582bbbe/cloud%2520mapping%2520payload")
         fig1, fig2 = self.create_host_fig(payload, key)
-        self.update_progress_bar()
         fig_list.append(fig1)
-        self.update_progress_bar()
         fig_list.append(fig2)
-        self.update_progress_bar()
         self.figures_to_html(fig_list)
+        self.update_progress_bar()
         sys.stdout.write("]\n")
         print("Done and Dusted!!!!!")
 
@@ -307,5 +344,3 @@ if __name__ == "__main__":
         print_error_and_exit("percentile should be one of 100, 99, 95, 90, 85, 80 only....")
 
     NodeReduction(**vars(args)).generate()
-
-
