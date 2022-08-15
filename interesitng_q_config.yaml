@@ -1,0 +1,7 @@
+attributes:
+memory_spilled: 0
+rows_produced: 10
+duration: 66
+est_per_node_peak_memory: 2726
+per_node_peak_memory: 491
+aggregate_peak_memory: 491
