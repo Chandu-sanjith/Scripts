@@ -48,22 +48,34 @@ class InterestingQueries:
                 pass
             else:
                 return False
+        except:
+            print("memory_spilled Key not present in the payload, skipping!!!!!")
+            pass
+        try:
             if int(float(metrics['estimated_per_node_peak_memory'])) >= int(float(self.est_per_node_peak_memory)):
                 pass
             else:
                 return False
+        except:
+            print("estimated_per_node_peak_memory Key not present in the payload, skipping!!!!!")
+            pass
+        try:
             if int(float(metrics['memory_per_node_peak'])) >= int(float(self.per_node_peak_memory)):
                 pass
             else:
                 return False
+        except:
+            print("memory_per_node_peak Key not present in the payload, skipping!!!!!")
+            pass
+        try:
             if int(float(duration)) >= int(float(self.duration)):
                 pass
             else:
                 return False
-            return True
-        except Exception as e:
-            print(e)
-            return False
+        except:
+            print("memory_per_node_peak Key not present in the payload, skipping!!!!!")
+            pass
+        return True
 
     def fetch_data_from_es(self, start_time, end_time):
         search = Search(using=self.es.es, index="app-search")
