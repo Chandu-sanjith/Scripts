@@ -14,7 +14,8 @@ class NodeReduction:
     def __init__(self, filter_keys, percentile):
         self.filter_keys = filter_keys
         self.percentile = percentile
-        self.db = DB.from_unravel_properties()
+        #self.db = DB.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
+        self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel", password="ve9NEEyDj7ArewVl5hyu5W3kDja8xuMUOVTSEpjJFoKNnw6Z1GpyA88mJOn1QAwI")
 
     def update_progress_bar(self):
         sys.stdout.write("###")
@@ -52,7 +53,7 @@ class NodeReduction:
              cluster_disc_resp['cluster_summary']['workflow_schedulers']]]
         return cluster_info_values
 
-    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/topk-impala/20220809T082740/node_reduction.html"):
+    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_reduction.html"):
         with open(filename, 'w') as dashboard:
             dashboard.write("<html><head></head><body>" + "\n")
             for fig in figs:
@@ -97,9 +98,17 @@ class NodeReduction:
         return fig
 
     def create_px_for_hosts(self, df):
-        fig = px.bar(df, y=[ 'usage_cores', 'usage_Memory', 'usage_disk', 'spec_cores', 'spec_Memory', 'spec_disk'], x="Host", height=400,
-                          title='Spec/Usage trend for selected hosts')
-        return fig
+        fig_list = []
+        fig2 = px.line(df, x="Host", y=['memory_used', 'spec_Memory'],height=400,
+                          title='Spec Memory/Usage Memory trend for selected hosts')
+        fig_list.append(fig2)
+        fig = px.line(df, y=['cores_used', 'spec_cores'], x="Host", height=400,
+                          title='Spec cores/Usage Cores trend for selected hosts')
+        fig_list.append(fig)
+        fig3 = px.line(df, y=['disk_used', 'spec_disk'], x="Host", height=400,
+                          title='Spec Disk/Usage Disk trend for selected hosts')
+        fig_list.append(fig3)
+        return fig_list
 
     def create_host_fig(self, payload_unicode, key):
         self.update_progress_bar()
@@ -127,8 +136,8 @@ class NodeReduction:
                                                                                    self.convert_size(
                                                                                        hosts_data['usage']['disk_bytes'])))
                 data_list.append(round(hosts_data['usage']['cores']))
-                data_list.append(hosts_data['usage']['memory_bytes'])
-                data_list.append(hosts_data['usage']['disk_bytes'])
+                data_list.append(self.convert_size(hosts_data['usage']['memory_bytes']))
+                data_list.append(self.convert_size(hosts_data['usage']['disk_bytes']))
 
 
 
@@ -142,16 +151,16 @@ class NodeReduction:
                                                                                    self.convert_size(
                                                                                        hosts_data['specs']['disk_bytes'])))
                 data_list.append(round(hosts_data['specs']['cores']))
-                data_list.append(hosts_data['specs']['memory_bytes'])
-                data_list.append(hosts_data['specs']['disk_bytes'])
+                data_list.append(self.convert_size(hosts_data['specs']['memory_bytes']))
+                data_list.append(self.convert_size(hosts_data['specs']['disk_bytes']))
             main_df_list.append(data_list)
             fig = go.Figure(data=[go.Table(header=dict(values=['Host', 'Host Roles', 'Actual Usage', 'Capacity']),
                                            cells=dict(values=[host_list, host_roles_list,
                                                               actual_usage_list, usage_list]),),
                                   ])
             fig.update_layout(title_text='Host Details against {} usage percentile'.format(self.percentile), title_x=0.5)
-            df = pd.DataFrame(main_df_list, columns=['Host', 'usage_cores', 'usage_Memory', 'usage_disk', 'spec_cores', 'spec_Memory', 'spec_disk'])
-            fig2 = self.create_px_for_hosts(df)
+        df = pd.DataFrame(main_df_list, columns=['Host', 'memory_used', 'spec_Memory'])
+        fig2 = self.create_px_for_hosts(df)
         return fig2,fig
 
     def generate_avg_hosts_values(self, cluster_disc_resp):
@@ -316,6 +325,8 @@ class NodeReduction:
         fig1, fig2 = self.create_host_fig(payload, key)
         fig_list.append(fig1)
         fig_list.append(fig2)
+        # fig_list.append(fig3)
+        # fig_list.append(fig4)
         self.figures_to_html(fig_list)
         self.update_progress_bar()
         sys.stdout.write("]\n")
