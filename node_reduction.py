@@ -98,17 +98,14 @@ class NodeReduction:
         return fig
 
     def create_px_for_hosts(self, df):
-        fig_list = []
-        fig2 = px.line(df, x="Host", y=['memory_used', 'spec_Memory'],height=400,
+        print(df.to_string())
+        fig2 = px.line(df, y=['memory_used', 'spec_Memory'], x="Host", height=400,
                           title='Spec Memory/Usage Memory trend for selected hosts')
-        fig_list.append(fig2)
         fig = px.line(df, y=['cores_used', 'spec_cores'], x="Host", height=400,
-                          title='Spec cores/Usage Cores trend for selected hosts')
-        fig_list.append(fig)
+                          title='Spec Cores/Usage Cores trend for selected hosts')
         fig3 = px.line(df, y=['disk_used', 'spec_disk'], x="Host", height=400,
                           title='Spec Disk/Usage Disk trend for selected hosts')
-        fig_list.append(fig3)
-        return fig_list
+        return fig2, fig, fig3
 
     def create_host_fig(self, payload_unicode, key):
         self.update_progress_bar()
@@ -159,9 +156,9 @@ class NodeReduction:
                                                               actual_usage_list, usage_list]),),
                                   ])
             fig.update_layout(title_text='Host Details against {} usage percentile'.format(self.percentile), title_x=0.5)
-        df = pd.DataFrame(main_df_list, columns=['Host', 'memory_used', 'spec_Memory'])
-        fig2 = self.create_px_for_hosts(df)
-        return fig2,fig
+        df = pd.DataFrame(main_df_list, columns=['Host', 'cores_used', 'memory_used', 'disk_used', 'spec_cores', 'spec_Memory', 'spec_disk'])
+        fig2, fig3, fig4 = self.create_px_for_hosts(df)
+        return fig2, fig3, fig4, fig
 
     def generate_avg_hosts_values(self, cluster_disc_resp):
         total_cores = 0
@@ -322,11 +319,11 @@ class NodeReduction:
         fig_list.append(self.generate_table_fig(avg_hosts_values, 'CIIII'))
         fig_list.append(self.px_line_graph(0, cluster_disc_resp))
         fig_list.append(self.px_line_graph(1, cluster_disc_resp))
-        fig1, fig2 = self.create_host_fig(payload, key)
+        fig1, fig2, fig3, fig4 = self.create_host_fig(payload, key)
         fig_list.append(fig1)
         fig_list.append(fig2)
-        # fig_list.append(fig3)
-        # fig_list.append(fig4)
+        fig_list.append(fig3)
+        fig_list.append(fig4)
         self.figures_to_html(fig_list)
         self.update_progress_bar()
         sys.stdout.write("]\n")
