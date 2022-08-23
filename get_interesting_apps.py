@@ -53,7 +53,7 @@ class AppExtractor(object):
         self.sort_key = args.sort_key
         self.sort_order = args.sort_order
         #self.db = DB.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
-        self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel", password="IFtrIu9a6lGvmZPJ6L9YuWzOGFe4d8JKYHZ2sNld6OP8zRyLRgupW7R6VvB2lkZL")
+        self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel", password="ve9NEEyDj7ArewVl5hyu5W3kDja8xuMUOVTSEpjJFoKNnw6Z1GpyA88mJOn1QAwI")
         try:
             self.es = ES()
         except:
