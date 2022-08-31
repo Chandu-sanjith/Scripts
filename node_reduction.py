@@ -9,13 +9,28 @@ import time
 from pyunravel import ES, DB
 import ast
 import json
+from datetime import datetime, timedelta, date
+import pytz
+import config
+from config import *
+from unravel.tools.crypto.password import PasswordEncryptor
+
+
+# pe_conf = {"AES": {"key": unravel_tools_password_encryptor_aes_key}}
+# PasswordEncryptor.configure_default(pe_conf)
 
 class NodeReduction:
     def __init__(self, filter_keys, percentile):
         self.filter_keys = filter_keys
         self.percentile = percentile
-        #self.db = DB.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
-        self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel", password="ve9NEEyDj7ArewVl5hyu5W3kDja8xuMUOVTSEpjJFoKNnw6Z1GpyA88mJOn1QAwI")
+        self.days = 30
+        self.end_date = date.today()
+        self.start_date = self.end_date - timedelta(days=self.days)
+        self.end_time = datetime.now(tz=pytz.utc)
+        self.start_time = self.end_time - timedelta(days=self.days)
+        # self.db = DB.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
+        self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel",
+                     password="ve9NEEyDj7ArewVl5hyu5W3kDja8xuMUOVTSEpjJFoKNnw6Z1GpyA88mJOn1QAwI")
 
     def update_progress_bar(self):
         sys.stdout.write("###")
@@ -30,7 +45,8 @@ class NodeReduction:
         df = pd.DataFrame.from_dict(data)
         df['date'] = pd.to_datetime(df['date'], origin='unix', unit='ms')
         if index == 0:
-            fig = px.line(df, y=["capacity", "used"], x="date", height=400, title='CPU Very under-utilized and over-provisioned')
+            fig = px.line(df, y=["capacity", "used"], x="date", height=400,
+                          title='CPU Very under-utilized and over-provisioned')
         else:
             fig = px.line(df, y=["capacity", "used"], x="date", height=400,
                           title='Memory Very under-utilized and over-provisioned')
@@ -53,13 +69,15 @@ class NodeReduction:
              cluster_disc_resp['cluster_summary']['workflow_schedulers']]]
         return cluster_info_values
 
-    def figures_to_html(self, figs, filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_reduction.html"):
+    def figures_to_html(self, figs,
+                        filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_reduction.html"):
         with open(filename, 'w') as dashboard:
             dashboard.write("<html><head></head><body>" + "\n")
             for fig in figs:
                 inner_html = fig.to_html(include_plotlyjs="cdn").split('<body>')[1].split('</body>')[0]
                 dashboard.write(inner_html)
             dashboard.write("</body></html>" + "\n")
+        print("file {} generated succefully.......".format(filename))
 
     def convert_size(self, size_bytes):
         if size_bytes == 0:
@@ -100,11 +118,11 @@ class NodeReduction:
     def create_px_for_hosts(self, df):
         print(df.to_string())
         fig2 = px.line(df, y=['memory_used', 'spec_Memory'], x="Host", height=400,
-                          title='Spec Memory/Usage Memory trend for selected hosts')
+                       title='Spec Memory/Usage Memory trend for selected hosts')
         fig = px.line(df, y=['cores_used', 'spec_cores'], x="Host", height=400,
-                          title='Spec Cores/Usage Cores trend for selected hosts')
+                      title='Spec Cores/Usage Cores trend for selected hosts')
         fig3 = px.line(df, y=['disk_used', 'spec_disk'], x="Host", height=400,
-                          title='Spec Disk/Usage Disk trend for selected hosts')
+                       title='Spec Disk/Usage Disk trend for selected hosts')
         return fig2, fig, fig3
 
     def create_host_fig(self, payload_unicode, key):
@@ -115,6 +133,7 @@ class NodeReduction:
         host_roles_list = []
         usage_list = []
         actual_usage_list = []
+        hosts = []
         fig = None
         # payload = json.loads(payload)
         payload = eval(payload)
@@ -122,6 +141,7 @@ class NodeReduction:
         for hosts_data in payload[key]['hosts']:
             if self.filter_keys not in hosts_data['usage']['roles']:
                 data_list = []
+                hosts.append(hosts_data['id'])
                 host_list.append(hosts_data['id'])
                 data_list.append(hosts_data['id'])
                 host_roles_list.append(hosts_data['specs']['roles'])
@@ -129,36 +149,39 @@ class NodeReduction:
                     'Cluster: {} <br>Cores: {} <br>Memory: {} <br>Disk: {}'.format(hosts_data['usage']['cluster_name'],
                                                                                    round(hosts_data['usage']['cores']),
                                                                                    self.convert_size(
-                                                                                       hosts_data['usage']['memory_bytes']),
+                                                                                       hosts_data['usage'][
+                                                                                           'memory_bytes']),
                                                                                    self.convert_size(
-                                                                                       hosts_data['usage']['disk_bytes'])))
+                                                                                       hosts_data['usage'][
+                                                                                           'disk_bytes'])))
                 data_list.append(round(hosts_data['usage']['cores']))
                 data_list.append(self.convert_size(hosts_data['usage']['memory_bytes']))
                 data_list.append(self.convert_size(hosts_data['usage']['disk_bytes']))
-
-
-
-
 
                 usage_list.append(
                     'Cluster: {} <br>Cores: {} <br>Memory: {} <br>Disk: {}'.format(hosts_data['specs']['cluster_name'],
                                                                                    round(hosts_data['specs']['cores']),
                                                                                    self.convert_size(
-                                                                                       hosts_data['specs']['memory_bytes']),
+                                                                                       hosts_data['specs'][
+                                                                                           'memory_bytes']),
                                                                                    self.convert_size(
-                                                                                       hosts_data['specs']['disk_bytes'])))
+                                                                                       hosts_data['specs'][
+                                                                                           'disk_bytes'])))
                 data_list.append(round(hosts_data['specs']['cores']))
                 data_list.append(self.convert_size(hosts_data['specs']['memory_bytes']))
                 data_list.append(self.convert_size(hosts_data['specs']['disk_bytes']))
             main_df_list.append(data_list)
             fig = go.Figure(data=[go.Table(header=dict(values=['Host', 'Host Roles', 'Actual Usage', 'Capacity']),
                                            cells=dict(values=[host_list, host_roles_list,
-                                                              actual_usage_list, usage_list]),),
+                                                              actual_usage_list, usage_list]), ),
                                   ])
-            fig.update_layout(title_text='Host Details against {} usage percentile'.format(self.percentile), title_x=0.5)
-        df = pd.DataFrame(main_df_list, columns=['Host', 'cores_used', 'memory_used', 'disk_used', 'spec_cores', 'spec_Memory', 'spec_disk'])
+            fig.update_layout(title_text='Host Details against {} usage percentile'.format(self.percentile),
+                              title_x=0.5)
+        df = pd.DataFrame(main_df_list,
+                          columns=['Host', 'cores_used', 'memory_used', 'disk_used', 'spec_cores', 'spec_Memory',
+                                   'spec_disk'])
         fig2, fig3, fig4 = self.create_px_for_hosts(df)
-        return fig2, fig3, fig4, fig
+        return fig2, fig3, fig4, fig, hosts
 
     def generate_avg_hosts_values(self, cluster_disc_resp):
         total_cores = 0
@@ -175,10 +198,12 @@ class NodeReduction:
                 total_cores = total_cores + hosts_data['cores']
                 total_disk = total_disk + hosts_data['disk_bytes']
                 total_memory = total_memory + hosts_data['memory_bytes']
-            avg_hosts_values = [['Hosts', 'Total Cores', 'Total Memory', 'Total Disk', 'Avg Cores/Host', 'Avg Memory/Host',
-                              'Avg Disk/Host'],  # 1st col
-                             [count, total_cores, self.convert_size(total_memory), self.convert_size(total_disk), total_cores / count,
-                              self.convert_size(total_memory / count), self.convert_size(total_disk / count)]]
+            avg_hosts_values = [
+                ['Hosts', 'Total Cores', 'Total Memory', 'Total Disk', 'Avg Cores/Host', 'Avg Memory/Host',
+                 'Avg Disk/Host'],  # 1st col
+                [count, total_cores, self.convert_size(total_memory), self.convert_size(total_disk),
+                 total_cores / count,
+                 self.convert_size(total_memory / count), self.convert_size(total_disk / count)]]
         return avg_hosts_values
 
     def check_if_task_is_completed(self, task_id):
@@ -192,7 +217,6 @@ class NodeReduction:
         else:
             time.sleep(10)
             return self.check_if_task_is_completed(task_id)
-
 
     def generate_cluster_mapping_per_host_report(self):
         self.update_progress_bar()
@@ -256,20 +280,11 @@ class NodeReduction:
 
         headers = {
             'Accept': 'application/json, text/plain, */*',
-            'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-            'Referer': 'https://sd58.unraveldata.com:3000/',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-origin',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/103.0.0.0 Safari/537.36',
-            'sec-ch-ua': '".Not/A)Brand";v="99", "Google Chrome";v="103", "Chromium";v="103"',
-            'sec-ch-ua-mobile': '?0',
-            'sec-ch-ua-platform': '"macOS"',
         }
 
         params = {
-            'start': '1657564200000',
-            'end': '1660156199000',
+            'start': int(self.start_time.strftime("%s")) * 1000,
+            'end': int(self.end_time.strftime("%s")) * 1000,
         }
 
         response = requests.get('http://localhost:5001/cluster-discovery', params=params, headers=headers)
@@ -288,12 +303,75 @@ class NodeReduction:
             sys.stderr.flush()
             sys.exit(1)
 
+    def fetch_cpu_and_memory_per_host_ts(self, host_names):
+        memory_df_dict = {}
+        cpu_df_dict = {}
+        cloudera_api_url = "sd11.unraveldata.com:7180"
+        for host in host_names:
+            cpu_list = []
+            memory_list = []
+            act_mem_list = []
+            api = '{}/api/v33/timeseries?query=select+cpu_percent+where+hostname={}&from={}&to={}&desiredRollup=HOURLY'.format(
+                cloudera_api_url, host, self.start_date, self.end_date)
+            response = requests.get(api, auth=('admin', 'admin'))
+            # print(response.status_code)
+            if response.status_code == 200:
+                # print(response.json()['items'][0]['timeSeries'][0]['data'])
+                for data in response.json()['items'][0]['timeSeries'][0]['data']:
+                    if len(data) != 0:
+                        cpu_dict = {}
+                        cpu_dict['timestamp'] = data['timestamp']
+                        cpu_dict['percentage'] = data['value']
+                        cpu_list.append(cpu_dict)
+            api = '{}/api/v33/timeseries?query=select+physical_memory_used,physical_memory_total+where+hostname={}&from={}&to={}&desiredRollup=HOURLY'.format(
+                cloudera_api_url, host, self.start_date, self.end_date)
+            response = requests.get(api, auth=('admin', 'admin'))
+            if response.status_code == 200:
+                for data in response.json()['items'][0]['timeSeries'][0]['data']:
+                    if len(data) != 0:
+                        memory_dict = {}
+                        memory_dict['timestamp'] = data['timestamp']
+                        memory_dict['value'] = data['value']
+                        memory_list.append(memory_dict)
+                for data in response.json()['items'][0]['timeSeries'][1]['data']:
+                    if len(data) != 0:
+                        memory_dict = {}
+                        memory_dict['timestamp'] = data['timestamp']
+                        memory_dict['actual'] = data['value']
+                        act_mem_list.append(memory_dict)
+
+            if len(cpu_list) != 0:
+                cpu_df = pd.DataFrame(cpu_list)
+                cpu_df_dict[host] = cpu_df
+            if len(memory_list) != 0 and len(act_mem_list) != 0:
+                memory_df = pd.DataFrame(memory_list)
+                df = pd.DataFrame(act_mem_list)
+                memory_df['actual'] = df['actual'].values
+                memory_df_dict[host] = memory_df
+        return memory_df_dict, cpu_df_dict
+
+    def plot_cpu_and_memory_figures(self, memory_df_dict, cpu_df_dict):
+        memory_fig_list = []
+        cpu_fig_list = []
+        for df_key, df_value in memory_df_dict.items():
+            fig = px.line(df_value, y=['value', 'actual'], x="timestamp", height=400,
+                          title='Memory Actual/Usage time series for {}'.format(df_key))
+            memory_fig_list.append(fig)
+        self.figures_to_html(memory_fig_list,
+                             filename='/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_memory.html')
+        for df_key, df_value in cpu_df_dict.items():
+            fig = px.line(df_value, y='percentage', x="timestamp", height=400,
+                          title='CPU Usage percentage time series for {}'.format(df_key))
+            cpu_fig_list.append(fig)
+        self.figures_to_html(cpu_fig_list,
+                             filename='/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_cpu.html')
+
     def generate(self):
         toolbar_width = 40
         print("Node Reduction report started!!!!")
         sys.stdout.write("[%s]" % (" " * toolbar_width))
         sys.stdout.flush()
-        sys.stdout.write("\b" * (toolbar_width+1)) # return to start of line, after '['
+        sys.stdout.write("\b" * (toolbar_width + 1))  # return to start of line, after '['
         key = ""
         if self.percentile == 100:
             key = 'p_100'
@@ -308,7 +386,6 @@ class NodeReduction:
         elif self.percentile == 80:
             key = 'p_80'
         fig_list = []
-        self.update_progress_bar()
         cluster_disc_entity_id = self.generate_cluster_discovery_report()
         cluster_disc_resp = self.get_report_payload(cluster_disc_entity_id)
         entity_id = self.generate_cluster_mapping_per_host_report()
@@ -317,25 +394,23 @@ class NodeReduction:
         fig_list.append(self.generate_table_fig(cluster_info_values, 'CI'))
         avg_hosts_values = self.generate_avg_hosts_values(cluster_disc_resp)
         fig_list.append(self.generate_table_fig(avg_hosts_values, 'CIIII'))
-        fig_list.append(self.px_line_graph(0, cluster_disc_resp))
-        fig_list.append(self.px_line_graph(1, cluster_disc_resp))
-        fig1, fig2, fig3, fig4 = self.create_host_fig(payload, key)
+        fig1, fig2, fig3, fig4, hosts = self.create_host_fig(payload, key)
+        memory_df_dict, cpu_df_dict = self.fetch_cpu_and_memory_per_host_ts(hosts)
+        self.plot_cpu_and_memory_figures(memory_df_dict, cpu_df_dict)
         fig_list.append(fig1)
         fig_list.append(fig2)
         fig_list.append(fig3)
         fig_list.append(fig4)
         self.figures_to_html(fig_list)
-        self.update_progress_bar()
         sys.stdout.write("]\n")
         print("Done and Dusted!!!!!")
-
-
 
 
 def print_error_and_exit(msg):
     sys.stderr.write(msg + "\n")
     sys.stderr.flush()
     sys.exit(1)
+
 
 if __name__ == "__main__":
     percentile_list = [100, 99, 95, 90, 85, 80]
