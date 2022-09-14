@@ -1,32 +1,41 @@
-import pandas as pd
+import json
+import logging
+import sys
 import requests
+import config
 import plotly.express as px
 import plotly.graph_objects as go
-import math
-import argparse
-import sys
 import time
+from collections import OrderedDict
+from datetime import datetime, timedelta, timezone
 from pyunravel import ES, DB
-import ast
-import json
-from datetime import datetime, timedelta, date
-import pytz
-import config
+from elasticsearch6 import Elasticsearch
+import pandas as pd
+from dash import dcc
+from dash import html
+import dash_bootstrap_components as dbc
+
+from config import *
+from pylib import apps, pdutil, ioutil, dashutil, uprops, esutil, report_utils
+
+logger = logging.getLogger('unravel')
+es_url = es_url
+unravel_url = unravel_url
 
 
-# pe_conf = {"AES": {"key": unravel_tools_password_encryptor_aes_key}}
-# PasswordEncryptor.configure_default(pe_conf)
-
-class NodeReduction:
-    def __init__(self, filter_keys, buffer):
+class Report:
+    def __init__(self, dest, filter_keys,
+                 buffer=20, days=None, start_date=None, end_date=None, mwatch=None):
         self.filter_keys = filter_keys
-        self.buffer = buffer
-        self.days = 30
-        self.end_date = date.today()
-        self.start_date = self.end_date - timedelta(days=self.days)
-        self.end_time = datetime.now(tz=pytz.utc)
-        self.start_time = self.end_time - timedelta(days=self.days)
-        # self.db = DB.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
+        self.dest = dest
+        self.buffer_value = buffer / 100.0
+        self.days = days
+        if start_date is not None:
+            self.start_time = datetime.strptime(start_date, "%Y-%m-%dT%H:%M:%S.%fZ")
+            self.end_time = datetime.strptime(end_date, "%Y-%m-%dT%H:%M:%S.%fZ")
+        else:
+            self.end_time = datetime.now(tz=timezone.utc)
+            self.start_time = self.end_time - timedelta(days=self.days)
         self.db = DB("jdbc:postgresql://127.0.0.1:4339/unravel", username="unravel",
                      password="ve9NEEyDj7ArewVl5hyu5W3kDja8xuMUOVTSEpjJFoKNnw6Z1GpyA88mJOn1QAwI")
 
@@ -35,7 +44,7 @@ class NodeReduction:
         sys.stdout.flush()
 
     def figures_to_html(self, figs,
-                        filename="/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_reduction.html"):
+                        filename=None):
         with open(filename, 'w') as dashboard:
             dashboard.write("<html><head></head><body>" + "\n")
             for fig in figs:
@@ -62,9 +71,10 @@ class NodeReduction:
         self.update_progress_bar()
         query = "SELECT task_status, entity_id FROM ondemand_tasks WHERE task_id = '{}'".format(task_id)
         response = self.db.execute(query)
-        if response[0][0].encode("utf-8") == "SUCCESS":
-            return response[0][1].encode("utf-8")
-        elif response[0][0].encode("utf-8") == "FAILURE":
+        print(response)
+        if response[0][0] == "SUCCESS":
+            return response[0][1]
+        elif response[0][0] == "FAILURE":
             return False
         else:
             time.sleep(2)
@@ -80,7 +90,7 @@ class NodeReduction:
         headers = {
             'Accept': 'application/json, text/plain, */*',
         }
-
+        print(int(self.start_time.strftime("%s")) * 1000)
         params = {
             'start': int(self.start_time.strftime("%s")) * 1000,
             'end': int(self.end_time.strftime("%s")) * 1000,
@@ -101,6 +111,9 @@ class NodeReduction:
             sys.stderr.write("cluster discovery report failed" + "\n")
             sys.stderr.flush()
             sys.exit(1)
+
+    def get_percentage_reduction_on_buffer(self, value):
+        return (value - (value * self.buffer_value))
 
     def fetch_cpu_and_memory_per_host_ts(self, host_names, cluster_discovery_response):
         memory_df_dict = {}
@@ -130,10 +143,10 @@ class NodeReduction:
         host_list = []
         hosts = payload['hosts']
         if '*' in self.filter_keys:
-            # filter_key_split = self.filter_keys.split('.*')
-            # filter_key = filter_key[0]
+            filter_key_split = self.filter_keys.split('.*')
+            filter_key = filter_key_split[0]
             for host in hosts:
-                if self.filter_keys not in host['roles']:
+                if filter_key not in host['roles']:
                     host_list.append(host['instance_id'])
         else:
             for host in hosts:
@@ -154,24 +167,35 @@ class NodeReduction:
             new_calculated_df = {}
             new_calculated_df['Host'] = key
             new_calculated_df['Peak {} utilization'.format(usage)] = '{} {}'.format(value[1], unit)
-            new_calculated_df['Free'] = '{} {}'.format((value[0] - value[1]), unit)
+            new_calculated_df['Free'] = '{:.2f} {}'.format((value[0] - value[1]), unit)
             free = free + (value[0] - value[1])
             new_calculated_df_list.append(new_calculated_df)
         can_be_saved_by = (free / len(usage_map))
         new_calculated_df = {}
         new_calculated_df['Host'] = "Total Free {} across selected nodes".format(usage)
         new_calculated_df['Peak {} utilization'.format(usage)] = ""
-        new_calculated_df['Free'] = '({})/{} = {} {}'.format(free,
-                                                             len(usage_map),
-                                                             can_be_saved_by, unit)
+        new_calculated_df['Free'] = '({:.2f})/{} = {:.2f} {}'.format(free,
+                                                                     len(usage_map),
+                                                                     can_be_saved_by, unit)
+
+        new_calculated_df_list.append(new_calculated_df)
+        new_calculated_df = {}
+        new_calculated_df['Host'] = "Total Free {} after removing buffer across selected nodes".format(usage)
+        new_calculated_df['Peak {} utilization'.format(usage)] = ""
+        new_calculated_df['Free'] = "{:.2f} {} - {:.2f} {} = {:.2f} {}".format(can_be_saved_by, unit,
+                                                                               (can_be_saved_by * self.buffer_value),
+                                                                               unit,
+                                                                               self.get_percentage_reduction_on_buffer(
+                                                                                   can_be_saved_by), unit)
         new_calculated_df_list.append(new_calculated_df)
         df = pd.DataFrame(new_calculated_df_list)
         df = df[['Host', 'Peak {} utilization'.format(usage), 'Free']]
         if usage == 'Memory':
-            string_to_display = "You can save around {} {} {} across selected nodes".format(can_be_saved_by, unit,
-                                                                                            usage)
+            string_to_display = "You can save around {:.2f} {} {} across selected nodes".format(
+                self.get_percentage_reduction_on_buffer(can_be_saved_by), unit, usage)
         else:
-            string_to_display = "You can save around {} {} of CPU across selected nodes".format(can_be_saved_by, unit)
+            string_to_display = "You can save around {:.2f} {} of CPU across selected nodes".format(
+                self.get_percentage_reduction_on_buffer(can_be_saved_by), unit)
         fig = self.generate_table_fig(df, string_to_display)
         return fig
 
@@ -195,7 +219,7 @@ class NodeReduction:
         f = self.calculate_node_save_metrics_and_plot_table(memory_usage_map, 'Memory')
         memory_fig_list.insert(0, f)
         self.figures_to_html(memory_fig_list,
-                             filename='/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_memory.html')
+                             filename=f'{self.dest}/node_memory.html')
         for df_key, df_value in cpu_df_dict.items():
             fig = px.line(df_value, y=['used', 'actual'], x="timeseries", height=400,
                           title='CPU Usage percentage time series for {}'.format(df_key))
@@ -209,39 +233,133 @@ class NodeReduction:
         f = self.calculate_node_save_metrics_and_plot_table(cpu_usage_map, 'Cores')
         cpu_fig_list.insert(0, f)
         self.figures_to_html(cpu_fig_list,
-                             filename='/opt/unravel/data/apps/unity-one/src/assets/reports/jobs/node_cpu.html')
+                             filename=f'{self.dest}/cpu_memory.html')
 
     def generate(self):
-        toolbar_width = 40
-        print("Node Reduction report started!!!!")
-        sys.stdout.write("[%s]" % (" " * toolbar_width))
-        sys.stdout.flush()
-        sys.stdout.write("\b" * (toolbar_width + 1))  # return to start of line, after '['
-        # cluster_disc_entity_id = self.generate_cluster_discovery_report()
+        cluster_disc_entity_id = self.generate_cluster_discovery_report()
         # print(cluster_disc_entity_id)
-        cluster_disc_resp = self.get_report_payload('139650209604298')
+        cluster_disc_resp = self.get_report_payload(cluster_disc_entity_id)
         hosts = self.filter_hosts_based_on_keys_by_user(cluster_disc_resp)
+        if len(hosts) == 0:
+            return
         memory_df_dict, cpu_df_dict = self.fetch_cpu_and_memory_per_host_ts(hosts, cluster_disc_resp)
         self.plot_cpu_and_memory_figures(memory_df_dict, cpu_df_dict)
-        sys.stdout.write("]\n")
         print("Done and Dusted!!!!!")
 
 
-def print_error_and_exit(msg):
-    sys.stderr.write(msg + "\n")
-    sys.stderr.flush()
-    sys.exit(1)
+def layout(params):
+    es = Elasticsearch(es_url, http_auth=(es_username, es_password) if es_username else None)
+    elastic_search = esutil.ES()
+    query = {
+        "aggs": {"min_start_time": {"min": {"field": "startTime"}}, "max_start_time": {"max": {"field": "startTime"}}}}
+    aggs = elastic_search.query_es(path='/feature*/_search?size=0', query=query)
+    min_start_time = aggs['aggregations']['min_start_time']['value_as_string'] if 'aggregations' in aggs else 0
+    max_start_time = aggs['aggregations']['max_start_time']['value_as_string'] if 'aggregations' in aggs else 0
+    feature_info = f"Feature generation completed for {min_start_time} to {max_start_time}" if min_start_time is not 0 else 'Feature not available'
+    tag_values_pair = report_utils.get_tags_values()
+    tags_all = list(tag_values_pair.keys())
+
+    return [
+        dbc.FormGroup([
+            dbc.Label('Look Back'),
+            dbc.InputGroup(
+                [
+                    dbc.Input(
+                        id='days', type='number', min=0, step=1,
+                        value=params['days'] if (params is not None and 'days' in params) else None
+                    ),
+                    dbc.InputGroupAddon("days", addon_type="append"),
+                    dbc.Tooltip(
+                        'The period of time over which applications are selected for report generation',
+                        target='days',
+                        placement='bottom-end',
+                    ),
+                ], size="sm",
+            ),
+        ]),
+        dbc.FormGroup([
+            dbc.Checklist(id='date-time-picker', options=[{'label': 'Use Exact Date-Time', 'value': 'DT'}],
+                          value=['DT'] if (params is not None and params['start_date'] is not None) else []),
+            html.Div(id='date-time')
+        ]),
+        dbc.FormGroup([
+            dbc.Label('filter_keys'),
+            dbc.Input(id='filter_keys', value=params['filter_keys'] if params else None),
+            dbc.Tooltip(
+                'nodes will be filtered based on these roles',
+                target='filter_keys',
+                placement='bottom-end',
+            )]),
+        dbc.FormGroup([
+            dbc.Label('buffer'),
+            dbc.Input(id='buffer', type="number", min=1, step=1, value=params['buffer'] if params else None),
+            dbc.Tooltip(
+                'buffer helps to reduce the value',
+                target='buffer',
+                placement='bottom-end',
+            )])
+    ]
 
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Node reduction')
-    parser.add_argument('--filter-keys', default=None, type=str,
-                        help='Output file name to write data for interesting apps including scores (from the `score` '
-                             'stage).')
-    parser.add_argument('--buffer', default=None, type=int,
-                        help='Should be between 1 to 100')
+def verify_params(params):
+    json_errors_list = []
+    if params['start_date'] is None and params['end_date'] is None and params['days'] is None:
+        json_errors_list.append('params should must have start_date and end_date or days')
+    if 'days' in params and params['days'] is not None and not isinstance(params['days'], int):
+        json_errors_list.append('days in params should must be a number')
+    if params['buffer'] is None or not isinstance(params['buffer'], int):
+        json_errors_list.append('params should must contain a buffer which should be a number')
 
+    return json_errors_list
+
+
+def params_from_layout(children):
+    params = {}
+
+    start_date = dashutil.prop(children, 'date-picker', 'startDate')
+    end_date = dashutil.prop(children, 'date-picker', 'endDate')
+
+    params['start_date'] = start_date
+    params['end_date'] = end_date
+
+    days = dashutil.prop(children, 'days', 'value')
+    if days is None and start_date is None:
+        raise Exception('days/date-time range is not specified')
+    if days is not None:
+        try:
+            days = int(days)
+        except:
+            raise Exception('days must be number')
+        if days <= 0:
+            raise Exception('days must be positive number')
+    params['days'] = days
+
+    filter_keys = dashutil.prop(children, 'filter_keys', 'value')
+    if filter_keys is None:
+        raise Exception('filter_keys is not specified')
+    params['filter_keys'] = filter_keys
+
+    buffer = dashutil.prop(children, 'buffer', 'value')
+    if buffer is None:
+        raise Exception('buffer is not specified')
+    params['buffer'] = buffer
+
+    return params
+
+
+if __name__ == '__main__':
+    import argparse
+
+    logger.setLevel(logging.DEBUG)
+    logging.basicConfig(format='%(asctime)s %(levelname)-8s |  %(message)s')
+
+    parser = argparse.ArgumentParser(description='generates kip trend reports')
+    parser.add_argument('--dest', help='destination directory', required=True)
+    parser.add_argument('--days', help='number of days to look back', required=True, type=int)
+    parser.add_argument('--start_date', help='start time')
+    parser.add_argument('--end_date', help='end time')
+    parser.add_argument('--filter_key', help='nodes will be filtered based on these roles.')
+    parser.add_argument('--buffer', help='number of apps in report, default 20', type=int, default=20)
     args = parser.parse_args()
-    print(args.buffer)
 
-    NodeReduction(**vars(args)).generate()
+    Report(**vars(args)).generate()
