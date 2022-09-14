@@ -22,8 +22,9 @@ import pytz
 # PasswordEncryptor.configure_default(pe_conf)
 
 class NodeReduction:
-    def __init__(self, filter_keys, buffer):
+    def __init__(self, filter_keys,filter_keys_only, buffer):
         self.filter_keys = filter_keys
+        self.filter_keys_only = filter_keys_only
         self.buffer = buffer
         self.days = 30
         self.end_date = date.today()
@@ -92,6 +93,7 @@ class NodeReduction:
             return False
         else:
             time.sleep(10)
+            self.update_progress_bar()
             return self.check_if_task_is_completed(task_id)
 
     def generate_cluster_mapping_per_host_report(self):
@@ -152,6 +154,20 @@ class NodeReduction:
         response = self.db.execute(query)
         return response[0][0]
 
+    def filter_nodes(self,roles):
+        if self.filter_keys is not None:
+            if self.filter_keys not in roles:
+                return True
+            else:
+                return False
+        else:
+            if len(roles) > 1:
+                return True
+            elif self.filter_keys_only not in roles:
+                return True
+            else:
+                return False
+
     def create_host_fig(self, payload_unicode, key):
         self.update_progress_bar()
         payload = json.dumps(payload_unicode)
@@ -159,7 +175,7 @@ class NodeReduction:
         payload = eval(payload)
         payload = json.loads(payload)
         for hosts_data in payload[key]['hosts']:
-            if self.filter_keys not in hosts_data['usage']['roles']:
+            if self.filter_nodes(hosts_data['usage']['roles']) == True:
                 hosts.append(hosts_data['id'])
         return hosts
 
@@ -340,7 +356,7 @@ class NodeReduction:
         # entity_id = self.generate_cluster_mapping_per_host_report()
         # payload = self.get_report_payload(entity_id)
         # hosts = self.create_host_fig(payload, key)
-        memory_df_dict, cpu_df_dict = self.fetch_cpu_and_memory_per_host_ts(['sd11.unraveldata.com', 'sd02.unraveldata.com', 'sd06.unraveldata.com'])
+        memory_df_dict, cpu_df_dict = self.fetch_cpu_and_memory_per_host_ts(['sd02.unraveldata.com','sd06.unraveldata.com','sd11.unraveldata.com','sd16.unraveldata.com'])
         self.plot_cpu_and_memory_figures(memory_df_dict, cpu_df_dict)
         # self.figures_to_html(fig_list)
         sys.stdout.write("]\n")
@@ -358,10 +374,16 @@ if __name__ == "__main__":
     parser.add_argument('--filter-keys', default=None, type=str,
                         help='Output file name to write data for interesting apps including scores (from the `score` '
                              'stage).')
+    parser.add_argument('--filter-keys-only', default=None, type=str,
+                        help='Output file name to write data for interesting apps including scores (from the `score` '
+                             'stage).')
     parser.add_argument('--buffer', default=None, type=int,
                         help='Should be between 1 to 100')
 
+
     args = parser.parse_args()
     print(args.buffer)
+    if args.filter_keys is not None and args.filter_keys_only is not None:
+        print_error_and_exit("Both --filter-keys and --filter-keys-only not allowed!!!")
 
     NodeReduction(**vars(args)).generate()
