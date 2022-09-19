@@ -1,7 +1,10 @@
 attributes:
-memory_spilled: 0
-rows_produced: 10
-duration: 66
-est_per_node_peak_memory: 2726
-per_node_peak_memory: 491
-aggregate_peak_memory: 491
+memory_spilled: 0                         # Unit: Bytes
+rows_produced: 10                         # Unit: Number
+duration: 66                              # Unit: Seconds
+est_per_node_peak_memory: 2726            # Unit: Bytes
+per_node_peak_memory: 491                 # Unit: Bytes
+aggregate_peak_memory: 491                # Unit: Bytes
+admission_wait_time: 1                    # Unit: Seconds
+hdfs_remote_bytes_read: 0                 # Unit: Bytes
+statistics_corrupt_or_missing: False      # Unit: True/False
