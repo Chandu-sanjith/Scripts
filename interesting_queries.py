@@ -1,5 +1,6 @@
 from locale import D_T_FMT
 from multiprocessing.sharedctypes import Value
+from urllib.parse import parse_qsl
 from elasticsearch6 import Elasticsearch
 from elasticsearch_dsl import Search
 from pyunravel import ES
@@ -14,6 +15,7 @@ import argparse
 import pandas as pd
 import logging
 import sys
+import math
 
 logging.basicConfig(filename="interesting_query_script.log",
                     format='%(asctime)s %(message)s',
@@ -65,98 +67,95 @@ class InterestingQueries:
 
     def check_for_attributes(self, metrics, duration):
         ## agregate, rows produced
+        status = True
         message = ''
         metrics = json.loads(metrics)
         try:
             if int(float(metrics['memory_spilled'])) >= int(float(self.memory_spilled)):
-                pass
+                message = 'memory_spilled was breached, '
+                status = False
             else:
-                message = 'Memory Spilled was {}, breached the threshold value {}'.format(metrics['memory_spilled'],
-                                                                                          self.memory_spilled)
-                return False, False
+                pass
         except:
             logging.info("memory_spilled Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['estimated_per_node_peak_memory'])) >= int(float(self.est_per_node_peak_memory)):
-                pass
+                message = message + 'estimated_per_node_peak_memory was breached, '
+                status = False
             else:
-                message = 'Estimated Per Node Peak Memory was {}, breached the threshold value {}'.format(
-                    metrics['estimated_per_node_peak_memory'], self.est_per_node_peak_memory)
-                return False, False
+                pass
         except:
             logging.info("estimated_per_node_peak_memory Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['memory_per_node_peak'])) >= int(float(self.per_node_peak_memory)):
-                pass
+                message = message + 'memory_per_node_peak was breached, '
+                status = False
             else:
-                message = 'Memory Per Node Peak was {}, breached the threshold value {}'.format(
-                    metrics['memory_per_node_peak'], self.per_node_peak_memory)
-                return False, False
+                pass
         except:
             logging.info("memory_per_node_peak Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(duration)) >= int(float(self.duration)):
-                pass
+                message = message + 'Query Duration was breached, '
+                status = False
             else:
-                message = 'Query Duration was {}, breached the threshold value {}'.format(duration, self.duration)
-                return False, False
+                pass
         except:
             logging.info("memory_per_node_peak Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['rows_produced'])) >= int(float(self.rows_produced)):
-                pass
+                message = message + 'rows_produced was breached, '
+                status = False
             else:
-                message = 'Rows Produced was {}, breached the threshold value {}'.format(metrics['rows_produced'],
-                                                                                         self.rows_produced)
-                return False, False
+                pass
         except:
             logging.info("rows_produced Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['memory_aggregate_peak'])) >= int(float(self.aggregate_peak_memory)):
-                pass
+                message = message + 'memory_aggregate_peak was breached, '
+                status = False
             else:
-                message = 'Memory Aggregate Peak was {}, breached the threshold value {}'.format(
-                    metrics['memory_aggregate_peak'], self.aggregate_peak_memory)
-                return False, False
+                pass
         except:
             logging.info("memory_aggregate_peak Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['admission_wait'])) >= int(float(self.admission_wait_time)):
-                pass
+                message = message + 'admission_wait was breached, '
+                status = False
             else:
-                message = 'Admission Wait was {}, breached the threshold value {}'.format(metrics['admission_wait'],
-                                                                                          self.admission_wait_time)
-                return False, False
+                pass
         except:
             logging.info("admission_wait Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['hdfs_bytes_read_remote'])) >= int(float(self.hdfs_bytes_read_remote)):
-                pass
+                message = message + 'hdfs_bytes_read_remote was breached, '
+                status = False
             else:
-                message = 'HDFS bytes read remote was {}, breached the threshold value {}'.format(
-                    metrics['hdfs_bytes_read_remote'], self.hdfs_bytes_read_remote)
-                return False, False
+                pass
         except:
             logging.info("hdfs_bytes_read_remote Key not present in the payload, skipping!!!!!")
             pass
         try:
             if metrics['stats_corrupt'] == self.stats_corrupt:
-                pass
+                message = message + 'stats_corrupt was breached'
+                status = False
             else:
-                message = 'Stats Corrupt was {}, not matching with configured value {}'.format(metrics['stats_corrupt'],
-                                                                                               self.stats_corrupt)
-                return False, False
+                pass
         except:
             logging.info("stats_corrupt Key not present in the payload, skipping!!!!!")
             pass
-        return message, True
+
+        if status == True:
+            return False, False
+        else:
+            return message, True
 
     def fetch_data_from_es(self, start_time, end_time):
         search = Search(using=self.es.es, index="app-search")
@@ -204,11 +203,25 @@ class InterestingQueries:
                 try:
                     message, status = self.check_for_attributes(row_dict['metrics'], row_dict['duration'])
                     if status == True:
-                        self.out_dict_list.append(row_dict)
+                        out_dict = {}
+                        out_dict['value'] = row_dict
+                        out_dict['message'] = message
+                        self.out_dict_list.append(out_dict)
                 except:
                     logging.info("error at check_for_attributes")
         except:
             logging.info("es error!!!!!")
+
+    def convert_size(self, size_bytes):
+        if size_bytes == 'N/A':
+            return "0B"
+        if size_bytes == 0:
+            return "0B"
+        size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+        i = int(math.floor(math.log(size_bytes, 1024)))
+        p = math.pow(1024, i)
+        s = round(size_bytes / p, 2)
+        return "%s %s" % (s, size_name[i])
 
     def generate_unravel_link(self, query_id, cluster_uuid):
         url = '{}/#/app/application/impala?execId={}&clusterUid={}'.format(self.unravel_url, query_id, cluster_uuid)
@@ -219,28 +232,47 @@ class InterestingQueries:
         df_dict_list = []
         for values in self.out_dict_list:
             df_dict = {}
-            loaded_metrics = json.loads(values['metrics'])
-            df_dict['queryId'] = values['id']
-            df_dict['unravelLink'] = self.generate_unravel_link(values['id'], values['clusterUid'])
-            df_dict['kind'] = values['kind']
-            df_dict['clusterId'] = values['clusterId']
-            df_dict['userName'] = values['userName']
-            df_dict['queue'] = values['queue']
-            df_dict['user'] = values['user']
-            df_dict['cpuTime'] = values['cpuTime']
-            df_dict['startTime'] = values['startTime']
-            df_dict['finishedTime'] = values['finishedTime']
-            df_dict['duration'] = values['duration']
-            df_dict['memorySeconds'] = values['memorySeconds']
-            df_dict['totalProcessingTime'] = values['totalProcessingTime']
-            df_dict['storageWaitTime'] = values['storageWaitTime']
-            df_dict['memorySpilled'] = loaded_metrics.get('memory_spilled', 'N/A')
-            df_dict['rowsProduced'] = loaded_metrics.get('memory_spilled', 'N/A')
-            df_dict['estPerNodePeakMemory'] = loaded_metrics.get('estimated_per_node_peak_memory', 'N/A')
-            df_dict['perNodePeakMemory'] = loaded_metrics.get('memory_per_node_peak', 'N/A')
-            df_dict['aggregatePeakMemory'] = loaded_metrics.get('memory_aggregate_peak', 'N/A')
+            loaded_metrics = json.loads(values['value']['metrics'])
+            df_dict['queryId'] = values['value']['id']
+            df_dict['unravelLink'] = self.generate_unravel_link(values['value']['id'], values['value']['clusterUid'])
+            df_dict['kind'] = values['value']['kind']
+            df_dict['clusterId'] = values['value']['clusterId']
+            df_dict['userName'] = values['value']['userName']
+            df_dict['queue'] = values['value']['queue']
+            df_dict['user'] = values['value']['user']
+            df_dict['cpuTime'] = values['value']['cpuTime']
+            df_dict['startTime'] = values['value']['startTime']
+            df_dict['finishedTime'] = values['value']['finishedTime']
+            df_dict['duration'] = values['value']['duration']
+            df_dict['memorySeconds'] = values['value']['memorySeconds']
+            df_dict['totalProcessingTime'] = values['value']['totalProcessingTime']
+            df_dict['storageWaitTime'] = values['value']['storageWaitTime']
+            df_dict['message'] = values['message']
+            try:
+                df_dict['memorySpilled'] = self.convert_size(int(loaded_metrics.get('memory_spilled', 'N/A')))
+            except:
+                df_dict['memorySpilled'] = 'N/A'
+            df_dict['rowsProduced'] = loaded_metrics.get('rows_produced', 'N/A')
+            try:
+                df_dict['estPerNodePeakMemory'] = self.convert_size(
+                    int(loaded_metrics.get('estimated_per_node_peak_memory', 'N/A')))
+            except:
+                df_dict['estPerNodePeakMemory'] = 'N/A'
+            try:
+                df_dict['perNodePeakMemory'] = self.convert_size(int(loaded_metrics.get('memory_per_node_peak', 'N/A')))
+            except:
+                df_dict['perNodePeakMemory'] = 'N/A'
+            try:
+                df_dict['aggregatePeakMemory'] = self.convert_size(
+                    int(loaded_metrics.get('memory_aggregate_peak', 'N/A')))
+            except:
+                df_dict['aggregatePeakMemory'] = 'N/A'
             df_dict['admissionWaitTime'] = loaded_metrics.get('admission_wait', 'N/A')
-            df_dict['hdfsRemoteBytesRead'] = loaded_metrics.get('hdfs_bytes_read_remote', 'N/A')
+            try:
+                df_dict['hdfsRemoteBytesRead'] = self.convert_size(
+                    int(loaded_metrics.get('hdfs_bytes_read_remote', 'N/A')))
+            except:
+                df_dict['hdfsRemoteBytesRead'] = 'N/A'
             df_dict['statisticsCorruptOrMissing'] = loaded_metrics.get('stats_corrupt', 'N/A')
             df_dict_list.append(df_dict)
         df = pd.DataFrame(df_dict_list)
@@ -249,7 +281,7 @@ class InterestingQueries:
             print("No data found for given config!!!                          ")
             print("-----------------------------------------------------------")
         else:
-            df.to_csv("out.csv", index=False)
+            df.to_csv("interesting_queries_data.csv", index=False)
             print("Done and Dusted !!!!!")
 
 
