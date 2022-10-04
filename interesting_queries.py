@@ -1,10 +1,5 @@
-from locale import D_T_FMT
-from multiprocessing.sharedctypes import Value
-from urllib.parse import parse_qsl
-from elasticsearch6 import Elasticsearch
 from elasticsearch_dsl import Search
 from pyunravel import ES
-from elasticsearch_dsl import Q
 import json
 import yaml
 from config import *
@@ -231,50 +226,53 @@ class InterestingQueries:
         self.fetch_data_from_es(self.start_time, self.end_time)
         df_dict_list = []
         for values in self.out_dict_list:
-            df_dict = {}
-            loaded_metrics = json.loads(values['value']['metrics'])
-            df_dict['queryId'] = values['value']['id']
-            df_dict['unravelLink'] = self.generate_unravel_link(values['value']['id'], values['value']['clusterUid'])
-            df_dict['kind'] = values['value']['kind']
-            df_dict['clusterId'] = values['value']['clusterId']
-            df_dict['userName'] = values['value']['userName']
-            df_dict['queue'] = values['value']['queue']
-            df_dict['user'] = values['value']['user']
-            df_dict['cpuTime'] = values['value']['cpuTime']
-            df_dict['startTime'] = values['value']['startTime']
-            df_dict['finishedTime'] = values['value']['finishedTime']
-            df_dict['duration'] = values['value']['duration']
-            df_dict['memorySeconds'] = values['value']['memorySeconds']
-            df_dict['totalProcessingTime'] = values['value']['totalProcessingTime']
-            df_dict['storageWaitTime'] = values['value']['storageWaitTime']
-            df_dict['message'] = values['message']
             try:
-                df_dict['memorySpilled'] = self.convert_size(int(loaded_metrics.get('memory_spilled', 'N/A')))
+                df_dict = {}
+                loaded_metrics = json.loads(values['value']['metrics'])
+                df_dict['queryId'] = values['value']['id']
+                df_dict['unravelLink'] = self.generate_unravel_link(values['value']['id'], values['value']['clusterUid'])
+                df_dict['kind'] = values['value'].get('kind', 'N/A')
+                df_dict['clusterId'] = values['value'].get('clusterId', 'N/A')
+                df_dict['userName'] = values['value'].get('userName', 'N/A')
+                df_dict['queue'] = values['value'].get('queue', 'N/A')
+                df_dict['user'] = values['value'].get('user', 'N/A')
+                df_dict['cpuTime'] = values['value'].get('cpuTime', 'N/A')
+                df_dict['startTime'] = values['value'].get('startTime', 'N/A')
+                df_dict['finishedTime'] = values['value'].get('finishedTime', 'N/A')
+                df_dict['duration'] = values['value'].get('duration', 'N/A')
+                df_dict['memorySeconds'] = values['value'].get('memorySeconds', 'N/A')
+                df_dict['totalProcessingTime'] = values['value'].get('totalProcessingTime', 'N/A')
+                df_dict['storageWaitTime'] = values['value'].get('storageWaitTime', 'N/A')
+                df_dict['message'] = values['message']
+                try:
+                    df_dict['memorySpilled'] = self.convert_size(int(loaded_metrics.get('memory_spilled', 'N/A')))
+                except:
+                    df_dict['memorySpilled'] = 'N/A'
+                df_dict['rowsProduced'] = loaded_metrics.get('rows_produced', 'N/A')
+                try:
+                    df_dict['estPerNodePeakMemory'] = self.convert_size(
+                        int(loaded_metrics.get('estimated_per_node_peak_memory', 'N/A')))
+                except:
+                    df_dict['estPerNodePeakMemory'] = 'N/A'
+                try:
+                    df_dict['perNodePeakMemory'] = self.convert_size(int(loaded_metrics.get('memory_per_node_peak', 'N/A')))
+                except:
+                    df_dict['perNodePeakMemory'] = 'N/A'
+                try:
+                    df_dict['aggregatePeakMemory'] = self.convert_size(
+                        int(loaded_metrics.get('memory_aggregate_peak', 'N/A')))
+                except:
+                    df_dict['aggregatePeakMemory'] = 'N/A'
+                df_dict['admissionWaitTime'] = loaded_metrics.get('admission_wait', 'N/A')
+                try:
+                    df_dict['hdfsRemoteBytesRead'] = self.convert_size(
+                        int(loaded_metrics.get('hdfs_bytes_read_remote', 'N/A')))
+                except:
+                    df_dict['hdfsRemoteBytesRead'] = 'N/A'
+                df_dict['statisticsCorruptOrMissing'] = loaded_metrics.get('stats_corrupt', 'N/A')
+                df_dict_list.append(df_dict)
             except:
-                df_dict['memorySpilled'] = 'N/A'
-            df_dict['rowsProduced'] = loaded_metrics.get('rows_produced', 'N/A')
-            try:
-                df_dict['estPerNodePeakMemory'] = self.convert_size(
-                    int(loaded_metrics.get('estimated_per_node_peak_memory', 'N/A')))
-            except:
-                df_dict['estPerNodePeakMemory'] = 'N/A'
-            try:
-                df_dict['perNodePeakMemory'] = self.convert_size(int(loaded_metrics.get('memory_per_node_peak', 'N/A')))
-            except:
-                df_dict['perNodePeakMemory'] = 'N/A'
-            try:
-                df_dict['aggregatePeakMemory'] = self.convert_size(
-                    int(loaded_metrics.get('memory_aggregate_peak', 'N/A')))
-            except:
-                df_dict['aggregatePeakMemory'] = 'N/A'
-            df_dict['admissionWaitTime'] = loaded_metrics.get('admission_wait', 'N/A')
-            try:
-                df_dict['hdfsRemoteBytesRead'] = self.convert_size(
-                    int(loaded_metrics.get('hdfs_bytes_read_remote', 'N/A')))
-            except:
-                df_dict['hdfsRemoteBytesRead'] = 'N/A'
-            df_dict['statisticsCorruptOrMissing'] = loaded_metrics.get('stats_corrupt', 'N/A')
-            df_dict_list.append(df_dict)
+                print("opps something went wrong!!!!!")
         df = pd.DataFrame(df_dict_list)
         if df.empty:
             print("--------------------------MESSAGE--------------------------")
