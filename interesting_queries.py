@@ -1,14 +1,16 @@
-from elasticsearch6 import Elasticsearch
 from elasticsearch_dsl import Search
 from pyunravel import ES
-from elasticsearch_dsl import Q
 import json
 import yaml
+from config import *
+import config
 from datetime import datetime, timedelta
 import pytz
 import argparse
 import pandas as pd
 import logging
+import sys
+import math
 
 logging.basicConfig(filename="interesting_query_script.log",
                     format='%(asctime)s %(message)s',
@@ -24,6 +26,17 @@ class InterestingQueries:
         self.attributes = yaml_dict['attributes']
         self.rows_produced = yaml_dict['rows_produced']
         self.memory_spilled = yaml_dict['memory_spilled']
+        self.admission_wait_time = yaml_dict['admission_wait_time']
+        self.hdfs_bytes_read_remote = yaml_dict['hdfs_remote_bytes_read']
+        if yaml_dict['statistics_corrupt_or_missing'] == False:
+            self.stats_corrupt = 'false'
+        elif yaml_dict['statistics_corrupt_or_missing'] == True:
+            self.stats_corrupt = 'true'
+        else:
+            print("------------------ERROR------------------------")
+            print("improper value for statistics_corrupt_or_missing")
+            print("------------------------------------------------")
+            sys.exit()
         self.days = args.days
         if args.days == None:
             self.start_time = datetime.strptime(args.start_date, "%Y-%m-%dT%H:%M:%S.%fZ")
@@ -40,56 +53,104 @@ class InterestingQueries:
         else:
             self.pool_list = None
         self.out_dict_list = []
-        self.es = ES.from_unravel_properties(props_path="/opt/unravel/data/conf/unravel.properties")
-        self.unravel_url = 'https://sd58.unraveldata.com:3000'
+        try:
+            self.es = ES.from_unravel_properties()
+        except:
+            print("error loading es from unravel properties!!!")
 
+        self.unravel_url = config.unravel_url
 
     def check_for_attributes(self, metrics, duration):
         ## agregate, rows produced
-        metrics = json.dumps(metrics)
-        metrics = eval(metrics)
+        status = True
+        message = ''
         metrics = json.loads(metrics)
         try:
             if int(float(metrics['memory_spilled'])) >= int(float(self.memory_spilled)):
-                pass
+                message = 'memory_spilled was breached, '
+                status = False
             else:
-                return False
+                pass
         except:
             logging.info("memory_spilled Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['estimated_per_node_peak_memory'])) >= int(float(self.est_per_node_peak_memory)):
-                pass
+                message = message + 'estimated_per_node_peak_memory was breached, '
+                status = False
             else:
-                return False
+                pass
         except:
             logging.info("estimated_per_node_peak_memory Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(metrics['memory_per_node_peak'])) >= int(float(self.per_node_peak_memory)):
-                pass
+                message = message + 'memory_per_node_peak was breached, '
+                status = False
             else:
-                return False
+                pass
         except:
             logging.info("memory_per_node_peak Key not present in the payload, skipping!!!!!")
             pass
         try:
             if int(float(duration)) >= int(float(self.duration)):
-                pass
+                message = message + 'Query Duration was breached, '
+                status = False
             else:
-                return False
+                pass
         except:
             logging.info("memory_per_node_peak Key not present in the payload, skipping!!!!!")
             pass
         try:
-            if int(float(metrics['memory_aggregate_peak'])) >= int(float(self.aggregate_peak_memory)):
-                pass
+            if int(float(metrics['rows_produced'])) >= int(float(self.rows_produced)):
+                message = message + 'rows_produced was breached, '
+                status = False
             else:
-                return False
+                pass
+        except:
+            logging.info("rows_produced Key not present in the payload, skipping!!!!!")
+            pass
+        try:
+            if int(float(metrics['memory_aggregate_peak'])) >= int(float(self.aggregate_peak_memory)):
+                message = message + 'memory_aggregate_peak was breached, '
+                status = False
+            else:
+                pass
         except:
             logging.info("memory_aggregate_peak Key not present in the payload, skipping!!!!!")
             pass
-        return True
+        try:
+            if int(float(metrics['admission_wait'])) >= int(float(self.admission_wait_time)):
+                message = message + 'admission_wait was breached, '
+                status = False
+            else:
+                pass
+        except:
+            logging.info("admission_wait Key not present in the payload, skipping!!!!!")
+            pass
+        try:
+            if int(float(metrics['hdfs_bytes_read_remote'])) >= int(float(self.hdfs_bytes_read_remote)):
+                message = message + 'hdfs_bytes_read_remote was breached, '
+                status = False
+            else:
+                pass
+        except:
+            logging.info("hdfs_bytes_read_remote Key not present in the payload, skipping!!!!!")
+            pass
+        try:
+            if metrics['stats_corrupt'] == self.stats_corrupt:
+                message = message + 'stats_corrupt was breached'
+                status = False
+            else:
+                pass
+        except:
+            logging.info("stats_corrupt Key not present in the payload, skipping!!!!!")
+            pass
+
+        if status == True:
+            return False, False
+        else:
+            return message, True
 
     def fetch_data_from_es(self, start_time, end_time):
         search = Search(using=self.es.es, index="app-search")
@@ -135,12 +196,27 @@ class InterestingQueries:
                 else:
                     continue
                 try:
-                    if self.check_for_attributes(row_dict['metrics'],row_dict['duration']) == True:
-                        self.out_dict_list.append(row_dict)
+                    message, status = self.check_for_attributes(row_dict['metrics'], row_dict['duration'])
+                    if status == True:
+                        out_dict = {}
+                        out_dict['value'] = row_dict
+                        out_dict['message'] = message
+                        self.out_dict_list.append(out_dict)
                 except:
                     logging.info("error at check_for_attributes")
         except:
             logging.info("es error!!!!!")
+
+    def convert_size(self, size_bytes):
+        if size_bytes == 'N/A':
+            return "0B"
+        if size_bytes == 0:
+            return "0B"
+        size_name = ("B", "KB", "MB", "GB", "TB", "PB", "EB", "ZB", "YB")
+        i = int(math.floor(math.log(size_bytes, 1024)))
+        p = math.pow(1024, i)
+        s = round(size_bytes / p, 2)
+        return "%s %s" % (s, size_name[i])
 
     def generate_unravel_link(self, query_id, cluster_uuid):
         url = '{}/#/app/application/impala?execId={}&clusterUid={}'.format(self.unravel_url, query_id, cluster_uuid)
@@ -150,32 +226,73 @@ class InterestingQueries:
         self.fetch_data_from_es(self.start_time, self.end_time)
         df_dict_list = []
         for values in self.out_dict_list:
-            df_dict = {}
-            df_dict['QueryId'] = values['id']
-            df_dict['UnravelLink'] = self.generate_unravel_link(values['id'],values['clusterUid'])
-            df_dict['Kind'] = values['kind']
-            df_dict['clusterId'] = values['clusterId']
-            df_dict['userName'] = values['userName']
-            df_dict['queue'] = values['queue']
-            df_dict['user'] = values['user']
-            df_dict['cpuTime'] = values['cpuTime']
-            df_dict['startTime'] = values['startTime']
-            df_dict['finishedTime'] = values['finishedTime']
-            df_dict['duration'] = values['duration']
-            df_dict['memorySeconds'] = values['memorySeconds']
-            df_dict['totalProcessingTime'] = values['totalProcessingTime']
-            df_dict['storageWaitTime'] = values['storageWaitTime']
-            df_dict_list.append(df_dict)
+            try:
+                df_dict = {}
+                loaded_metrics = json.loads(values['value']['metrics'])
+                df_dict['queryId'] = values['value']['id']
+                df_dict['unravelLink'] = self.generate_unravel_link(values['value']['id'], values['value']['clusterUid'])
+                df_dict['kind'] = values['value'].get('kind', 'N/A')
+                df_dict['clusterId'] = values['value'].get('clusterId', 'N/A')
+                df_dict['userName'] = values['value'].get('userName', 'N/A')
+                df_dict['queue'] = values['value'].get('queue', 'N/A')
+                df_dict['user'] = values['value'].get('user', 'N/A')
+                df_dict['cpuTime'] = values['value'].get('cpuTime', 'N/A')
+                df_dict['startTime'] = values['value'].get('startTime', 'N/A')
+                df_dict['finishedTime'] = values['value'].get('finishedTime', 'N/A')
+                df_dict['duration'] = values['value'].get('duration', 'N/A')
+                df_dict['memorySeconds'] = values['value'].get('memorySeconds', 'N/A')
+                df_dict['totalProcessingTime'] = values['value'].get('totalProcessingTime', 'N/A')
+                df_dict['storageWaitTime'] = values['value'].get('storageWaitTime', 'N/A')
+                df_dict['message'] = values['message']
+                try:
+                    df_dict['memorySpilled'] = self.convert_size(int(loaded_metrics.get('memory_spilled', 'N/A')))
+                except:
+                    df_dict['memorySpilled'] = 'N/A'
+                df_dict['rowsProduced'] = loaded_metrics.get('rows_produced', 'N/A')
+                try:
+                    df_dict['estPerNodePeakMemory'] = self.convert_size(
+                        int(loaded_metrics.get('estimated_per_node_peak_memory', 'N/A')))
+                except:
+                    df_dict['estPerNodePeakMemory'] = 'N/A'
+                try:
+                    df_dict['perNodePeakMemory'] = self.convert_size(int(loaded_metrics.get('memory_per_node_peak', 'N/A')))
+                except:
+                    df_dict['perNodePeakMemory'] = 'N/A'
+                try:
+                    df_dict['aggregatePeakMemory'] = self.convert_size(
+                        int(loaded_metrics.get('memory_aggregate_peak', 'N/A')))
+                except:
+                    df_dict['aggregatePeakMemory'] = 'N/A'
+                df_dict['admissionWaitTime'] = loaded_metrics.get('admission_wait', 'N/A')
+                try:
+                    df_dict['hdfsRemoteBytesRead'] = self.convert_size(
+                        int(loaded_metrics.get('hdfs_bytes_read_remote', 'N/A')))
+                except:
+                    df_dict['hdfsRemoteBytesRead'] = 'N/A'
+                df_dict['statisticsCorruptOrMissing'] = loaded_metrics.get('stats_corrupt', 'N/A')
+                df_dict_list.append(df_dict)
+            except:
+                print("opps something went wrong!!!!!")
         df = pd.DataFrame(df_dict_list)
-        df.to_csv("out.csv", index=False)
-        print("Done and Dusted !!!!!")
+        if df.empty:
+            print("--------------------------MESSAGE--------------------------")
+            print("No data found for given config!!!                          ")
+            print("-----------------------------------------------------------")
+        else:
+            df.to_csv("interesting_queries_data.csv", index=False)
+            print("Done and Dusted !!!!!")
+
 
 if __name__ == "__main__":
     with open("interesting_q_config.yaml", "r") as stream:
         try:
             yaml_dict = yaml.safe_load(stream)
         except yaml.YAMLError as exc:
+            print("------------------ERROR------------------------")
+            print("error loading interesting_q_config.yaml file!!!")
+            print("------------------------------------------------")
             logging.info(exc)
+            sys.exit()
 
     parser = argparse.ArgumentParser(description='Extract interesting hive apps')
     parser.add_argument('--days', type=int, default=30,
@@ -219,4 +336,4 @@ if __name__ == "__main__":
                 args.end_date = datetime.strptime(args.end_date, '%Y-%m-%d %H:%M:%S')
             except:
                 raise ValueError('Invalid end date:', args.end_date)
-    InterestingQueries(yaml_dict,args).run()
+    InterestingQueries(yaml_dict, args).run()
